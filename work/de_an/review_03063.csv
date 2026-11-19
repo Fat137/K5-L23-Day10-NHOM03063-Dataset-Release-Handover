@@ -1,0 +1,4 @@
+﻿image,type,verdict,note
+img_0003,bbox_drift,,[03063] 
+img_0037,class_swap,,[03063] 
+img_0045,class_swap,,[03063] 

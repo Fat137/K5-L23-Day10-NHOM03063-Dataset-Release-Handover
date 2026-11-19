@@ -1,0 +1,4 @@
+﻿image,type,verdict,note
+000000009483,class_swap,,[03054] 
+000000009590,instance_merge,,[03054] 
+000000011051,bbox_drift,,[03054] 

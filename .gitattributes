@@ -1,0 +1,3 @@
+# Lô v2 nộp trong submission/ có manifest.csv và .sha256 tính trên đúng byte của file.
+# Không để git đổi xuống dòng LF <-> CRLF, nếu không sha256 sẽ lệch trên máy người chấm.
+submission/** -text

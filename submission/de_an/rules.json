@@ -1,0 +1,59 @@
+{
+ "errors": [
+  {
+   "type": "bbox_out_of_bounds",
+   "target": "img_0069",
+   "detail": "dòng 1 [-0.028,0.000,1.000,1.000]"
+  },
+  {
+   "type": "guideline_mismatch",
+   "target": "img_0095",
+   "detail": "ảnh ghi v1.3, job J01 ghi v1.2"
+  },
+  {
+   "type": "guideline_mismatch",
+   "target": "img_0247",
+   "detail": "ảnh ghi v1.2, job J06 ghi v1.3"
+  },
+  {
+   "type": "invalid_category_id",
+   "target": "img_0020",
+   "detail": "category_id không có trong categories: [140]"
+  },
+  {
+   "type": "invalid_class",
+   "target": "img_0159",
+   "detail": "class_id ngoài 0-79: ['80']"
+  },
+  {
+   "type": "missing_image",
+   "target": "img_0209",
+   "detail": "thiếu images/img_0209.jpg"
+  },
+  {
+   "type": "scene_leak",
+   "target": "scene_735",
+   "detail": "train: 4 ảnh, val: 1 ảnh; ảnh lệch split: ['img_0035']"
+  },
+  {
+   "type": "thing_overlap",
+   "target": "img_0036",
+   "detail": "segment 915332 area=662 > 471 pixel"
+  },
+  {
+   "type": "thing_overlap",
+   "target": "img_0177",
+   "detail": "segment 4713206 area=258 > 185 pixel"
+  },
+  {
+   "type": "wrong_hash",
+   "target": "img_0038",
+   "detail": "sha256 không khớp manifest: image"
+  },
+  {
+   "type": "wrong_hash",
+   "target": "img_0199",
+   "detail": "sha256 không khớp manifest: image"
+  }
+ ]
+}

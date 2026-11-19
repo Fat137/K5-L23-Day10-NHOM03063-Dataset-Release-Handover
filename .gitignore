@@ -8,3 +8,6 @@ __pycache__/
 *.zip
 /hidden
 /delivery
+
+# ảnh xem review (không commit)
+/work/**/xem_*/

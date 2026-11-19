@@ -1,0 +1,54 @@
+{
+ "candidates": [
+  {
+   "type": "bbox_drift",
+   "target": "img_0003",
+   "detail": "box#4 book IoU=0.51 với segment 9862260 box=(65,221,236,293) seg=(30,232,201,305)"
+  },
+  {
+   "type": "class_swap",
+   "target": "img_0037",
+   "detail": "box#1 detection=fork <-> segment 655425 panoptic=spoon IoU=0.98 (class_swap hay category_swap: xem ảnh)"
+  },
+  {
+   "type": "class_swap",
+   "target": "img_0045",
+   "detail": "box#15 detection=truck <-> segment 13865343 panoptic=bus IoU=0.99 (class_swap hay category_swap: xem ảnh)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "img_0068",
+   "detail": "box#4 bottle IoU=0.78 với segment 4160847 box=(402,159,430,211) seg=(402,159,424,211)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "img_0081",
+   "detail": "box#4 person IoU=0.73 với segment 12031302 box=(334,109,493,480) seg=(376,109,493,480)"
+  },
+  {
+   "type": "instance_merge",
+   "target": "img_0106",
+   "detail": "segment 8887863 horse phủ box#0 và box#1 (box#1 không có segment riêng; IoU hợp = 0.99)"
+  },
+  {
+   "type": "class_swap",
+   "target": "img_0127",
+   "detail": "box#14 detection=handbag <-> segment 11987219 panoptic=suitcase IoU=0.99 (class_swap hay category_swap: xem ảnh)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "img_0164",
+   "detail": "box#0 stop sign IoU=0.56 với segment 8822639 box=(420,208,581,371) seg=(391,155,581,347)"
+  },
+  {
+   "type": "missing_box",
+   "target": "img_0169",
+   "detail": "segment 11819550 car 5128 px (3.1% ảnh) không có box (IoU tốt nhất 0.00)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "img_0173",
+   "detail": "box#3 bus IoU=0.71 với segment 7373795 box=(475,385,616,480) seg=(498,384,640,480)"
+  }
+ ]
+}

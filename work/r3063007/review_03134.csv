@@ -1,0 +1,4 @@
+﻿image,type,verdict,note
+000000013659,bbox_drift,,[03134] 
+000000020247,missing_box,,[03134] 
+000000020553,instance_merge,,[03134] 
