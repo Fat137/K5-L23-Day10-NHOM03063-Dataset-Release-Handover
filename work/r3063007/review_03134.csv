@@ -1,4 +1,4 @@
-﻿image,type,verdict,note
-000000013659,bbox_drift,,[03134] 
-000000020247,missing_box,,[03134] 
-000000020553,instance_merge,,[03134] 
+image,type,verdict,note
+000000013659,bbox_drift,confirmed,"[03134] Box detection bị lệch khỏi vật thể trên 30% diện tích so với vị trí thực"
+000000020247,missing_box,confirmed,"[03134] Con gấu bear trong ảnh có mask panoptic rõ ràng nhưng detection thiếu box hoàn toàn"
+000000020553,instance_merge,confirmed,"[03134] Hai cá thể cùng loại đứng gần nhau bị panoptic gộp chung thành một segment duy nhất"

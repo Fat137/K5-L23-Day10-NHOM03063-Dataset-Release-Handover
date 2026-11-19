@@ -1,4 +1,4 @@
-﻿image,type,verdict,note
-img_0127,class_swap,,[03134] 
-img_0164,bbox_drift,,[03134] 
-img_0169,missing_box,,[03134] 
+image,type,verdict,note
+img_0127,class_swap,confirmed,"[03134] Vali hành lý đặt trong thùng xe nhưng detection gán nhầm thành handbag thay vì suitcase"
+img_0164,bbox_drift,confirmed,"[03134] Biển báo stop sign bị box detection lệch tâm xuống dưới và sang phải hơn 30%"
+img_0169,missing_box,confirmed,"[03134] Ô tô màu trắng ở góc dưới bên phải đường không có bounding box trong nhãn detection"
