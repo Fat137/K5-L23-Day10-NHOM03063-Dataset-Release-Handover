@@ -2,8 +2,8 @@
 
 ## 1. Số liệu luyện tập
 - F1 theo seed (rule / cross_check / overall): <<seed: ... / ... / ...>>
-- Số ứng viên trên lô sạch (`--no-faults`): <<...>>; hàng đợi trên seed luyện tập: <<... ảnh>>
-- Ngưỡng đã chọn và cách chọn (không dùng `_private`): <<...>>
+- Số ứng viên trên lô sạch (`--no-faults`): **0**; hàng đợi trên seed luyện tập: **13 ảnh**
+- Ngưỡng đã chọn và cách chọn (không dùng `_private`): một cặp box–segment cùng lớp được coi là "khớp" khi box chứa ≥ 98% pixel segment và IoU ≥ 0,8 (box ≥ 400 px) hoặc ≥ 0,5 (box nhỏ), đo trên lô sạch kết hợp tự gài lỗi bằng `tools/tu_gai_loi.py` (chi tiết bên dưới).
 
 ### Validator luật
 - F1 lỗi luật ≈ 1.0 trên seed 3063007, 11, 22 và lô dạng đề ẩn (`--opaque`, seed 777). Lô sạch: 0 lỗi luật.
@@ -13,8 +13,21 @@
   - `thing_overlap`: báo khi `area` khai lớn hơn số pixel đếm được trong mask. Ở segment tự nhiên hai số này luôn bằng nhau.
   - `wrong_hash`: tính lại sha256 trên bytes của ảnh, nhãn và mask rồi so với manifest, không chỉ kiểm định dạng 64 ký tự.
 
+### Đối chiếu detection ↔ panoptic (`validator/crosscheck.py`)
+- Số ứng viên trên lô sạch (`runs/clean`, 50 ảnh calib, `--no-faults`): **0**. Hàng đợi trên seed luyện tập 3063007: **13 ảnh** (bbox_drift 3, class_swap/category_swap 4, instance_merge 4, missing_box 2). Trên các seed thử 11, 22, 33, 44 và lô dạng đề ẩn (`--opaque`, seed 777): 11–14 ảnh.
+- Cách ghép: box với segment **cùng tên lớp** (`classes.txt` ↔ `categories`), đo bằng IoU bbox và tỉ lệ **pixel của segment nằm trong box** (đếm trên mask), không chỉ IoU bbox.
+- Cách chọn ngưỡng (không dùng `_private`):
+  1. Đo trên lô sạch: cả 435 box tự nhiên đều chứa 100% pixel của segment cùng lớp; IoU bbox dưới 0,8 chỉ gặp ở box tí hon (< 160 pixel). Từ đó: một cặp "khớp" khi box chứa ≥ 98% pixel segment và IoU ≥ 0,8 (box ≥ 400 pixel) hoặc ≥ 0,5 (box nhỏ).
+  2. Tự gài lỗi lên lô sạch bằng `tools/tu_gai_loi.py` (script của nhóm, tự ghi đáp án): mức lỗi như lô luyện tập bắt được 78/80 lỗi, mức khó hơn (box lệch 5–15%, vật nhỏ hơn) bắt được 56/60, **0 ảnh báo thừa**. Các ca sót là box gần như không bị dịch (IoU vẫn 0,81–0,97).
+  3. Ứng viên `missing_box` trên lô luyện tập lặp lại ở cùng ảnh qua mọi seed (000000000872, 000000001818, 000000012748): segment không có box riêng nhưng có box cùng lớp gần trùng (IoU ≥ 0,72). Đây là cặp vật cùng lớp mà lô giao đã bỏ bớt box trùng, không phải lỗi gài, nên thêm luật bỏ qua (IoU ≥ 0,7).
+- Thứ tự xét mỗi ảnh: khác lớp → gộp instance → box lệch → thiếu box; mỗi ảnh tối đa một ứng viên (mỗi ảnh mang nhiều nhất một lỗi), các dấu hiệu khác ghi thêm vào `detail`.
+
 ## 2. Vì sao báo hết ứng viên làm F1 giảm?
-<<Trả lời bằng số của nhóm.>>
+Thử trên seed 11, 22, 33, 44 và lô 777: lấy lỗi luật cộng **toàn bộ ứng viên** làm `errors.json` mà không xem ảnh, F1 của nhóm lỗi gán nhãn chỉ khoảng **0,4–0,5**. Hai lý do:
+1. **Hướng đổi lớp không biết trước.** Khi box và segment trùng chỗ mà khác lớp, ứng viên chỉ nói "hai nguồn bất đồng". Nếu ghi bừa `class_swap` thì ca nào thật ra là `category_swap` thành **một báo thừa + một bỏ sót** cùng lúc. Chỉ nhìn ảnh mới biết bên nào ghi đúng vật.
+2. **Lệch tự nhiên của COCO** (vật bị che, cặp box trùng đã bị bỏ bớt) cũng thành ứng viên. F1 là trung bình điều hoà của precision và recall, nên mỗi báo thừa kéo precision xuống, trừ điểm như một lỗi bỏ sót.
+
+Vì vậy nhóm giữ hàng đợi nhỏ (≈13 ảnh) để xem hết, và chỉ đưa vào `errors.json` các dòng `confirmed` sau khi xem ảnh.
 
 ## 3. Quyết định và lineage
 - QC v1: **11/250 = 4,4%** ảnh/cảnh lỗi (số tạm tính trên lỗi luật của `rules.json`; **cập nhật lại khi có `errors.json` cuối** gồm cả lỗi gán nhãn đã `confirmed`). Mỗi ảnh tối đa một lỗi, mỗi `scene_leak` tính một đơn vị. Trên ngưỡng 2% của Day 7 nên v1 **Hold**. Chỉ riêng lỗi luật đã vượt ngưỡng, nên kết luận không đổi khi có thêm lỗi gán nhãn.

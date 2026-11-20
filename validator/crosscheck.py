@@ -1,200 +1,220 @@
-"""Đối chiếu detection (labels/ YOLO) với panoptic (panoptic.json + masks/) của cùng ảnh.
+"""Đối chiếu detection <-> panoptic của cùng một ảnh để sinh ứng viên lỗi gán nhãn.
 
-Sinh ỨNG VIÊN lỗi gán nhãn. Ứng viên chưa phải lỗi: người trong nhóm phải mở ảnh xác nhận.
+Ứng viên KHÔNG phải lỗi: người trong nhóm phải mở ảnh rồi ghi confirmed/rejected.
 
-Ghép box với segment thing qua IoU của bbox; lớp ghép qua TÊN (classes.txt <-> categories).
-Bbox của segment lấy từ pixel thật của mask (không tin bbox khai trong segments_info).
-
-Dấu hiệu:
-- class_or_category_swap: box và segment trùng vị trí (IoU cao) nhưng khác lớp, không bên nào có
-  bạn cùng lớp ở đó. Người xem ảnh quyết định class_swap (detection sai) hay category_swap (panoptic sai).
-- bbox_drift: box cùng lớp ghép tốt nhất với segment nhưng IoU thấp hơn hẳn mức tự nhiên.
-- missing_box: segment thing lớn không có box nào phủ.
-- instance_merge: một segment chứa >= 2 box cùng lớp, bbox segment ≈ hợp các box đó.
-
-Chỉ thư viện chuẩn + scripts/pngutil.py (qua common.Delivery).
+Ý tưởng: COCO panoptic tách từ cùng annotation với detection, nên với một vật đúng thì
+  - box và segment cùng lớp gần như trùng bbox (IoU cao), và
+  - gần như toàn bộ pixel của segment nằm trong box.
+Khi một trong hai nguồn bị sửa, cặp đó vỡ theo những kiểu khác nhau:
+  class_swap / category_swap : box trùng vị trí một segment KHÁC lớp, và không có segment cùng lớp nào khớp
+  bbox_drift                 : segment cùng lớp có một phần pixel rơi ra ngoài box
+  instance_merge             : một segment phủ HAI box cùng lớp
+  missing_box                : segment thing không có box nào phủ
 """
 
 from __future__ import annotations
 
+import math
+from collections import Counter
+
 from common import Delivery
 
-# Ngưỡng (đo trên lô sạch runs/clean và seed luyện tập, xem REPORT.md)
-SWAP_IOU = 0.45         # box và segment khác lớp trùng nhau ít nhất mức này
-DRIFT_LO, DRIFT_HI = 0.1, 0.8   # IoU box-segment cùng lớp nằm trong khoảng này: nghi lệch
-MISS_FRAC = 0.004       # segment chiếm ít nhất 1% ảnh mới tính là "vật đáng kể"
-MISS_IOU = 0.4         # không box nào (mọi lớp) đạt IoU này với segment -> thiếu box
-MERGE_UNION_IOU = 0.7   # hợp hai box cùng lớp khớp bbox segment
-MERGE_SINGLE_MAX = 0.75  # mỗi box riêng lẻ khớp segment kém
+# Một cặp box-segment được coi là "khớp" khi IoU bbox và tỉ lệ pixel nằm trong box đều cao.
+# Đo trên lô sạch (runs/clean, 50 ảnh, 435 box): mọi cặp đúng chứa 100% pixel của segment trong box;
+# IoU dưới 0,8 chỉ gặp ở box tí hon (< 160 pixel), nơi vài pixel rasterize đã đủ làm IoU tụt.
+MATCH_IOU = 0.5
+MATCH_COVER = 0.98
+MATCH_IOU_BIG = 0.8      # box từ BIG_BOX_PX trở lên phải khớp chặt hơn
+BIG_BOX_PX = 400
+# Box và segment khác lớp được coi là "cùng một vật" khi bbox gần như trùng.
+SWAP_IOU = 0.6
+# Gộp instance: mỗi box phải chứa một phần đáng kể của segment, và các box cộng lại chứa gần hết segment.
+MERGE_PART = 0.10   # box chứa >= 10% pixel của segment
+MERGE_FILL = 0.30   # hoặc pixel của segment lấp >= 30% diện tích box (vật nhỏ bị gộp vào vật lớn)
+MERGE_TOTAL = 0.85
+# Thiếu box: chỉ xét segment đủ lớn để nhìn thấy (tỉ lệ diện tích ảnh).
+MISSING_MIN_FRAC = 0.002
+DEDUP_IOU = 0.7
+# Box lệch: bỏ qua box quá nhỏ (vài chục pixel), lệch rasterize không có ý nghĩa.
+DRIFT_MIN_PX = 150
 
 
 def iou(a, b) -> float:
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     inter = ix * iy
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / ua if ua > 0 else 0.0
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
-def union_box(a, b):
-    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+def rect_counts(px: bytearray, W: int, H: int, rect, slack: int = 1) -> dict[int, int]:
+    """Đếm pixel của từng segment id nằm trong một hình chữ nhật (nới 1 pixel cho sai số rasterize)."""
+    x0 = max(0, math.floor(rect[0]) - slack)
+    y0 = max(0, math.floor(rect[1]) - slack)
+    x1 = min(W, math.ceil(rect[2]) + slack)
+    y1 = min(H, math.ceil(rect[3]) + slack)
+    c: Counter = Counter()
+    for y in range(y0, y1):
+        row = px[(y * W + x0) * 3:(y * W + x1) * 3]
+        c.update(zip(row[0::3], row[1::3], row[2::3]))
+    return {r + g * 256 + b * 65536: n for (r, g, b), n in c.items()}
 
 
-def pixel_bboxes(d: Delivery, name: str) -> dict[int, tuple[float, float, float, float]]:
-    """bbox (x0, y0, x1, y1) theo pixel thật của từng segment id trong mask."""
+def load_image(d: Delivery, name: str):
     m = d.mask(name)
-    if not m:
-        return {}
+    ann = d.pan_ann.get(name)
+    if m is None or ann is None:
+        return None
     W, H, px = m
-    out: dict[int, list[int]] = {}
-    row_bytes = W * 3
-    for y in range(H):
-        row = px[y * row_bytes:(y + 1) * row_bytes]
-        ids = {}
-        # gom theo màu trong một hàng
-        for x, rgb in enumerate(zip(row[0::3], row[1::3], row[2::3])):
-            if rgb != (0, 0, 0):
-                if rgb in ids:
-                    ids[rgb][1] = x
-                else:
-                    ids[rgb] = [x, x]
-        for (r, g, b), (x0, x1) in ids.items():
-            sid = r + g * 256 + b * 65536
-            bb = out.get(sid)
-            if bb is None:
-                out[sid] = [x0, y, x1, y]
-            else:
-                if x0 < bb[0]:
-                    bb[0] = x0
-                if x1 > bb[2]:
-                    bb[2] = x1
-                bb[3] = y
-    return {k: (v[0], v[1], v[2] + 1, v[3] + 1) for k, v in out.items()}
+    totals = d.segment_pixel_counts(name)
+    segs = []
+    for s in ann.get("segments_info", []):
+        cat = d.categories.get(s.get("category_id"))
+        if not cat or not cat.get("isthing") or s.get("iscrowd"):
+            continue
+        x, y, w, h = s["bbox"]
+        segs.append({"id": s["id"], "name": cat["name"], "rect": (x, y, x + w, y + h), "tot": totals.get(s["id"], 0)})
+    boxes = []
+    for b in d.boxes(name):
+        if b["cls"] not in d.classes or "px" not in b:
+            continue
+        b = dict(b)
+        b["name"] = d.classes[b["cls"]]
+        b["inside"] = rect_counts(px, W, H, b["px"])
+        l, t, r, bt = b["px"]
+        b["area"] = max(0.0, (r - l) * (bt - t))
+        boxes.append(b)
+    return W, H, segs, boxes
+
+
+def cover(box, seg) -> float:
+    """Tỉ lệ pixel của segment nằm trong box."""
+    return box["inside"].get(seg["id"], 0) / seg["tot"] if seg["tot"] else 0.0
+
+
+def fill(box, seg) -> float:
+    """Tỉ lệ diện tích box bị pixel của segment lấp."""
+    return box["inside"].get(seg["id"], 0) / box["area"] if box["area"] else 0.0
+
+
+def matched(box, seg) -> bool:
+    need = MATCH_IOU_BIG if box["area"] >= BIG_BOX_PX else MATCH_IOU
+    return box["name"] == seg["name"] and iou(box["px"], seg["rect"]) >= need and cover(box, seg) >= MATCH_COVER
+
+
+def box_label(b) -> str:
+    l, t, r, bt = b["px"]
+    return f"box {b['name']} dòng {b['i'] + 1} [{l:.0f},{t:.0f},{r:.0f},{bt:.0f}]"
+
+
+def seg_label(s) -> str:
+    l, t, r, bt = s["rect"]
+    return f"segment {s['name']} id {s['id']} [{l:.0f},{t:.0f},{r:.0f},{bt:.0f}] {s['tot']} px"
+
+
+def check_image(d: Delivery, name: str) -> list[dict]:
+    loaded = load_image(d, name)
+    if loaded is None:
+        return []
+    W, H, segs, boxes = loaded
+    ok_boxes = {id(b) for b in boxes if any(matched(b, s) for s in segs)}
+    ok_segs = {s["id"] for s in segs if any(matched(b, s) for b in boxes)}
+    bad_boxes = [b for b in boxes if id(b) not in ok_boxes]
+    bad_segs = [s for s in segs if s["id"] not in ok_segs]
+    out: list[dict] = []
+    used_boxes, used_segs = set(), set()
+
+    # 1. Khác lớp: box chưa khớp nằm đúng chỗ một segment khác lớp cũng chưa khớp.
+    for b in bad_boxes:
+        best = max((s for s in bad_segs if s["name"] != b["name"]), key=lambda s: iou(b["px"], s["rect"]), default=None)
+        if best and iou(b["px"], best["rect"]) >= SWAP_IOU and cover(b, best) >= MATCH_COVER:
+            out.append({"type": "class_swap", "alt": "category_swap", "target": name,
+                        "detail": f"{box_label(b)} trùng vị trí {seg_label(best)} (IoU {iou(b['px'], best['rect']):.2f}). "
+                                  f"Detection ghi {b['name']}, panoptic ghi {best['name']}: xem ảnh, detection sai thì class_swap, panoptic sai thì category_swap",
+                        "boxes": [b["i"]], "segments": [best["id"]]})
+            used_boxes.add(id(b))
+            used_segs.add(best["id"])
+
+    # 2. Gộp instance: một segment cùng lớp chiếm phần lớn >= 2 box, trong đó có box "mồ côi"
+    #    (box chưa khớp segment nào: segment của nó đã bị gộp vào segment kia).
+    for s in segs:
+        if s["id"] in used_segs or not s["tot"]:
+            continue
+        parts = [b for b in boxes if b["name"] == s["name"] and (cover(b, s) >= MERGE_PART or fill(b, s) >= MERGE_FILL)]
+        # Box mồ côi thật: không còn segment cùng lớp nào khác chồng lên nó. Nếu còn, đó là box lệch
+        # khỏi segment của chính nó (bbox_drift) chứ không phải bị gộp.
+        orphans = [b for b in parts if id(b) not in ok_boxes and id(b) not in used_boxes
+                   and not any(t["id"] != s["id"] and t["name"] == b["name"] and iou(b["px"], t["rect"]) >= 0.3 for t in segs)]
+        if len(parts) < 2 or not orphans:
+            continue
+        total = min(1.0, sum(cover(b, s) for b in parts))
+        if total >= MERGE_TOTAL:
+            out.append({"type": "instance_merge", "target": name,
+                        "detail": f"{seg_label(s)} phủ {len(parts)} box {s['name']}: "
+                                  + ", ".join(f"{box_label(b)} chứa {cover(b, s):.0%}" for b in parts)
+                                  + ". Xem ảnh: có phải hai vật riêng bị gộp làm một segment?",
+                        "boxes": [b["i"] for b in parts], "segments": [s["id"]]})
+            used_segs.add(s["id"])
+            used_boxes.update(id(b) for b in parts)
+
+    # 3. Box lệch: box chưa khớp, segment cùng lớp gần nhất có một phần pixel rơi ra ngoài box.
+    for b in bad_boxes:
+        if id(b) in used_boxes or b["area"] < DRIFT_MIN_PX:
+            continue
+        same = [s for s in segs if s["name"] == b["name"] and s["id"] not in used_segs]
+        s = max(same, key=lambda s: iou(b["px"], s["rect"]), default=None)
+        if s is None or iou(b["px"], s["rect"]) == 0:
+            # không có segment cùng lớp nào chồng lên box: box ghi sai lớp hoặc box trên chỗ trống
+            under = max(segs, key=lambda t: iou(b["px"], t["rect"]), default=None)
+            hint = f"; nằm trên {seg_label(under)}" if under and iou(b["px"], under["rect"]) > 0.3 else ""
+            out.append({"type": "class_swap", "alt": "category_swap", "target": name,
+                        "detail": f"{box_label(b)} không có segment {b['name']} nào chồng lên{hint}. Xem ảnh: vật trong box là gì?",
+                        "boxes": [b["i"]], "segments": [under["id"]] if hint else []})
+            used_boxes.add(id(b))
+            continue
+        c = cover(b, s)
+        out.append({"type": "bbox_drift", "target": name,
+                    "detail": f"{box_label(b)} so với {seg_label(s)}: IoU {iou(b['px'], s['rect']):.2f}, "
+                              f"{1 - c:.0%} pixel của segment nằm ngoài box. Xem ảnh: box có lệch khỏi vật?",
+                    "boxes": [b["i"]], "segments": [s["id"]]})
+        used_boxes.add(id(b))
+        used_segs.add(s["id"])
+
+    # 4. Thiếu box: segment thing đủ lớn mà không box nào phủ phần lớn.
+    for s in bad_segs:
+        if s["id"] in used_segs or s["tot"] < MISSING_MIN_FRAC * W * H:
+            continue
+        # Box của vật khác (to hơn, khác lớp) có thể chứa trọn segment, ví dụ ghế nằm trong box người:
+        # chỉ coi là "đã có box" khi box cùng lớp phủ phần lớn segment, hoặc box nào đó trùng vị trí segment.
+        # Box đã khớp với segment của chính nó thì không "giải thích" được segment này.
+        free = [b for b in boxes if id(b) not in ok_boxes]
+        same_cover = max((cover(b, s) for b in free if b["name"] == s["name"]), default=0.0)
+        best_iou = max((iou(b["px"], s["rect"]) for b in free), default=0.0)
+        if same_cover >= 0.5 or best_iou >= MATCH_IOU:
+            continue
+        # Hai vật cùng lớp có bbox gần trùng nhau mà chỉ còn một box: COCO vốn hay có cặp box trùng
+        # và lô giao đã bỏ bớt box trùng (IoU > 0,7). Gặp lặp lại ở mọi seed trên cùng ảnh, nên không báo.
+        if any(b["name"] == s["name"] and iou(b["px"], s["rect"]) >= DEDUP_IOU for b in boxes):
+            continue
+        out.append({"type": "missing_box", "target": name,
+                    "detail": f"{seg_label(s)} không có box {s['name']} nào phủ (box cùng lớp phủ nhiều nhất chứa {same_cover:.0%}). "
+                              f"Xem ảnh: có {s['name']} rõ ràng mà detection thiếu box?",
+                    "boxes": [], "segments": [s["id"]]})
+        used_segs.add(s["id"])
+    return out
 
 
 def find_candidates(d: Delivery) -> list[dict]:
-    cands: list[dict] = []
+    """Mỗi ảnh tối đa một ứng viên (mỗi ảnh mang nhiều nhất một lỗi); các dấu hiệu khác ghi thêm vào detail."""
+    result = []
     for name in d.images:
-        ann = d.pan_ann.get(name)
-        size = d.size(name)
-        if not ann or not size or not d.path(name, "mask").is_file():
-            continue
-        W, H = size
-        boxes = [b for b in d.boxes(name) if "px" in b and b["cls"] in d.classes]
-        pix = pixel_bboxes(d, name)
-        segs = []
-        for s in ann.get("segments_info", []):
-            cat = d.categories.get(s.get("category_id"))
-            if not cat or not cat.get("isthing") or s.get("iscrowd"):
-                continue
-            if s["id"] not in pix:
-                continue
-            segs.append({"id": s["id"], "name": cat["name"], "bb": pix[s["id"]],
-                         "area": d.segment_pixel_counts(name).get(s["id"], 0)})
-        crowd = []
-        for s in ann.get("segments_info", []):
-            cat = d.categories.get(s.get("category_id"))
-            if s.get("iscrowd") and cat and s["id"] in pix:
-                crowd.append((cat["name"], pix[s["id"]]))
-
-        found: list[tuple[str, str, float]] = []  # (type, detail, score)
-
-        def bname(b):
-            return d.classes[b["cls"]]
-
-        # IoU ma trận
-        M = [[iou(b["px"], s["bb"]) for s in segs] for b in boxes]
-
-        # 1. khác lớp tại cùng vị trí
-        for i, b in enumerate(boxes):
-            for j, s in enumerate(segs):
-                if M[i][j] < SWAP_IOU or bname(b) == s["name"]:
-                    continue
-                same_seg = any(segs[k]["name"] == bname(b) and M[i][k] >= 0.3 for k in range(len(segs)))
-                same_box = any(bname(boxes[k]) == s["name"] and M[k][j] >= 0.3 for k in range(len(boxes)))
-                in_crowd = any(cn == bname(b) and iou(b["px"], cb) > 0 for cn, cb in crowd)
-                if not same_seg and not same_box and not in_crowd:
-                    found.append(("class_swap",
-                                  f"box#{b['i']} detection={bname(b)} <-> segment {s['id']} panoptic={s['name']} "
-                                  f"IoU={M[i][j]:.2f} (class_swap hay category_swap: xem ảnh)", M[i][j]))
-
-        # 2. lệch box: segment cùng lớp, ghép tốt nhất nhưng IoU thấp
-        for j, s in enumerate(segs):
-            same = [(M[i][j], i) for i, b in enumerate(boxes) if bname(b) == s["name"]]
-            if not same:
-                continue
-            best, i = max(same)
-            # box đó có segment khác cùng lớp khớp tốt hơn không?
-            better = max((M[i][k] for k in range(len(segs)) if k != j and segs[k]["name"] == s["name"]), default=0)
-            if DRIFT_LO <= best < DRIFT_HI and better < best and s["area"] >= 0.002 * W * H:
-                bb = boxes[i]["px"]
-                found.append(("bbox_drift",
-                              f"box#{boxes[i]['i']} {s['name']} IoU={best:.2f} với segment {s['id']} "
-                              f"box=({bb[0]:.0f},{bb[1]:.0f},{bb[2]:.0f},{bb[3]:.0f}) "
-                              f"seg=({s['bb'][0]:.0f},{s['bb'][1]:.0f},{s['bb'][2]:.0f},{s['bb'][3]:.0f})",
-                              1 - best))
-
-        # 3. thiếu box: segment lớn không box nào phủ
-        for j, s in enumerate(segs):
-            if s["area"] < MISS_FRAC * W * H:
-                continue
-            best = max((M[i][j] for i in range(len(boxes))), default=0)
-            if best < MISS_IOU:
-                found.append(("missing_box",
-                              f"segment {s['id']} {s['name']} {s['area']} px ({100 * s['area'] / (W * H):.1f}% ảnh) "
-                              f"không có box (IoU tốt nhất {best:.2f})", s["area"] / (W * H)))
-
-        # 4. gộp: một segment ≈ hợp hai box cùng lớp
-        for j, s in enumerate(segs):
-            same = [i for i, b in enumerate(boxes) if bname(b) == s["name"] and M[i][j] > 0.05]
-            hit = None
-            for a in range(len(same)):
-                for c in range(a + 1, len(same)):
-                    ia, ic = same[a], same[c]
-                    u = iou(union_box(boxes[ia]["px"], boxes[ic]["px"]), s["bb"])
-                    if u >= MERGE_UNION_IOU and max(M[ia][j], M[ic][j]) < MERGE_SINGLE_MAX:
-                        # hai box này không có segment riêng nào khác khớp tốt
-                        own = [max((M[x][k] for k in range(len(segs)) if k != j and segs[k]["name"] == s["name"]),
-                                   default=0) for x in (ia, ic)]
-                        if max(own) < 0.5 and (hit is None or u > hit[0]):
-                            hit = (u, ia, ic)
-            if hit:
-                u, ia, ic = hit
-                found.append(("instance_merge",
-                              f"segment {s['id']} {s['name']} phủ box#{boxes[ia]['i']} và box#{boxes[ic]['i']} "
-                              f"(IoU hợp hai box = {u:.2f})", u))
-
-        # 4b. gộp (cách 2): box cùng lớp không có segment riêng, nằm gọn trong segment của box khác
-        for i, b in enumerate(boxes):
-            own = max((M[i][k] for k in range(len(segs)) if segs[k]["name"] == bname(b)), default=0)
-            if own >= 0.5:
-                continue
-            ab = (b["px"][2] - b["px"][0]) * (b["px"][3] - b["px"][1])
-            if ab <= 0:
-                continue
-            for j, s in enumerate(segs):
-                if s["name"] != bname(b):
-                    continue
-                sb = s["bb"]
-                ix = max(0.0, min(b["px"][2], sb[2]) - max(b["px"][0], sb[0]))
-                iy = max(0.0, min(b["px"][3], sb[3]) - max(b["px"][1], sb[1]))
-                if ix * iy / ab < 0.6:
-                    continue
-                others = [k for k in range(len(boxes)) if k != i and bname(boxes[k]) == s["name"] and M[k][j] >= 0.3]
-                for k in others:
-                    u = iou(union_box(b["px"], boxes[k]["px"]), sb)
-                    if u >= 0.5 and u > M[k][j]:
-                        found.append(("instance_merge",
-                                      f"segment {s['id']} {s['name']} phủ box#{boxes[k]['i']} và box#{b['i']} "
-                                      f"(box#{b['i']} không có segment riêng; IoU hợp = {u:.2f})", u))
-                        break
-
+        found = check_image(d, name)
         if not found:
             continue
-        # mỗi ảnh nhiều nhất một lỗi: giữ dấu hiệu mạnh nhất theo thứ tự ưu tiên
-        prio = {"instance_merge": 0, "class_swap": 1, "missing_box": 2, "bbox_drift": 3}
-        found.sort(key=lambda f: (prio[f[0]], -f[2]))
-        t, detail, _ = found[0]
-        others = "; ".join(f"{f[0]}: {f[1]}" for f in found[1:3])
-        cands.append({"type": t, "target": name, "detail": detail + (f" | khác: {others}" if others else "")})
-    return cands
+        first = dict(found[0])
+        if len(found) > 1:
+            first["detail"] += " | Dấu hiệu khác: " + " / ".join(f"{f['type']}: {f['detail']}" for f in found[1:])
+            first["boxes"] = sorted({i for f in found for i in f["boxes"]})
+            first["segments"] = sorted({i for f in found for i in f["segments"]})
+        result.append(first)
+    return result
