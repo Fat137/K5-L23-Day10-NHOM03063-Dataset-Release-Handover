@@ -1,4 +1,4 @@
-﻿image,type,verdict,note
-000000009483,class_swap,,[03054] 
-000000009590,instance_merge,,[03054] 
-000000011051,bbox_drift,,[03054] 
+image,type,verdict,note
+000000009483,class_swap,confirmed,"[03054] Vật thật ở góc phải bàn làm việc là màn hình máy tính đặt trên thùng PC đen, panoptic ghi tv đúng, detection gán sai thành banana."
+000000009590,instance_merge,confirmed,"[03054] Segment person 1775127 gộp chung người đàn ông mặc áo khoác tối ngồi bên trái bàn với phần chân quần jean sáng của người thứ hai ở mép dưới."
+000000011051,bbox_drift,confirmed,"[03054] Cà vạt vàng kem lộ rõ trên áo vest đen không bị che, nhưng box tie lệch sang trái hụt đỉnh và mũi phải, kéo thừa đáy xuống áo 42px."
