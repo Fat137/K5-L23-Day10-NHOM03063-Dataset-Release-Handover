@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Dựng lô v2 (detection) từ delivery v1 + errors.json đã chốt, rồi đóng gói.
+"""Dựng lô v2 (sản phẩm detection) từ lô v1 + errors.json cuối, KHÔNG sửa gì trong delivery/.
 
-  py -X utf8 tools/build_v2.py --run runs/r3063007 --errors runs/r3063007/errors.json
+  python tools/build_v2.py --run runs/r3063007
+  python tools/build_v2.py --run runs/r3063007 --hong 000000001234      # ảnh wrong_hash đã mở ra thấy hỏng
 
-Không sửa gì trong <run>/delivery. Ghi <run>/handover/<release_id>_v2/ (xoá bản cũ rồi dựng lại),
-sau đó gọi scripts/pack_release.py. Chạy lại được bất cứ lúc nào errors.json thay đổi.
+Ghi runs/<run>/handover/<release_id>_v2/: images/, labels/, rework_queue.csv, manifest.csv,
+label_summary.csv, truyvet.csv, README.txt. Sau đó chạy scripts/pack_release.py và lineage (xem GUIDE Pha 4).
 
-Quy tắc (GUIDE Pha 4):
-- Lỗi nhãn detection hoặc thiếu file -> rework_queue.csv, ảnh rời v2.
-- wrong_hash: mở ảnh bằng Pillow; mở được thì giữ ảnh, manifest.csv ghi hash mới; hỏng thì rework.
-- guideline_mismatch: truyvet.csv lấy guideline theo job. scene_leak: cả cảnh về split đa số.
-- Lỗi chỉ ở panoptic: ảnh ở lại v2, ghi vào README để báo team panoptic.
+Cách xử lý từng loại lỗi (GUIDE Pha 4):
+  - Sửa ngay trong v2: wrong_hash (ảnh còn nguyên -> ghi hash mới), guideline_mismatch (guideline theo job),
+    scene_leak (cả cảnh về một split, theo split đa số của cảnh).
+  - Lỗi ở nhãn detection hoặc thiếu file: vào rework_queue và rời v2.
+  - Lỗi chỉ ở panoptic: ảnh ở lại v2 (nhãn detection vẫn đúng), ghi vào Ghi chú để báo team panoptic.
 """
 
 from __future__ import annotations
@@ -20,189 +21,206 @@ import csv
 import hashlib
 import json
 import shutil
+import struct
 import subprocess
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
-DET_REWORK = {"missing_image", "invalid_class", "bbox_out_of_bounds", "duplicate_box",
-              "class_swap", "bbox_drift", "missing_box"}
+DET_REWORK = {"missing_image", "invalid_class", "bbox_out_of_bounds", "duplicate_box", "class_swap", "bbox_drift", "missing_box"}
 PANOPTIC_ONLY = {"invalid_category_id", "thing_overlap", "category_swap", "instance_merge"}
-ACTION = {
-    "missing_image": "bổ sung lại file ảnh rồi gán lại",
-    "invalid_class": "sửa class_id ngoài 0-79",
-    "bbox_out_of_bounds": "kẻ lại box tràn ra ngoài ảnh",
-    "duplicate_box": "xoá box lặp",
-    "class_swap": "gán lại đúng lớp",
-    "bbox_drift": "kẻ lại box ôm sát vật",
-    "missing_box": "thêm box còn thiếu",
-    "wrong_hash": "ảnh không mở được: lấy lại ảnh gốc rồi gán lại",
-}
+FIX_IN_V2 = {"wrong_hash", "guideline_mismatch", "scene_leak"}
 THRESHOLD = 0.02
 ROOT = Path(__file__).resolve().parent.parent
+ACTION = {
+    "missing_image": "giao lại file ảnh rồi gán lại nhãn",
+    "wrong_hash": "ảnh hỏng: thay ảnh gốc rồi gán lại nhãn",
+    "invalid_class": "sửa class_id ngoài 0-79",
+    "bbox_out_of_bounds": "sửa box tràn ra ngoài ảnh",
+    "duplicate_box": "xoá box bị lặp",
+    "class_swap": "sửa lớp của box gán nhầm",
+    "bbox_drift": "vẽ lại box bị lệch khỏi vật",
+    "missing_box": "thêm box còn thiếu",
+}
 
 
-def sha(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+def sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def image_ok(p: Path) -> bool:
-    try:
-        from PIL import Image
-        with Image.open(p) as im:
-            im.load()
-        return True
-    except Exception:
-        return False
+def jpeg_ok(path: Path, size: tuple[int, int] | None) -> tuple[bool, str]:
+    """Kiểm cấu trúc JPEG bằng thư viện chuẩn: SOI, EOI, kích thước trong SOF khớp kích thước ảnh trong lô.
+    Đây chỉ là kiểm máy; GUIDE yêu cầu NGƯỜI mở ảnh xem trước khi kết luận ảnh còn nguyên."""
+    data = path.read_bytes()
+    if not data.startswith(b"\xff\xd8"):
+        return False, "không bắt đầu bằng FFD8"
+    if b"\xff\xd9" not in data[-64:]:
+        return False, "không có FFD9 ở cuối file"
+    i = 2
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            h, w = struct.unpack(">HH", data[i + 5:i + 9])
+            if size and (w, h) != tuple(size):
+                return False, f"kích thước {w}x{h} khác {size[0]}x{size[1]}"
+            return True, f"JPEG {w}x{h}"
+        i += 2 + seg_len
+    return False, "không thấy SOF"
 
 
 def write_csv(path: Path, header: list[str], rows: list[list]) -> None:
-    # Không BOM: check_handover.py đọc bằng utf-8 thường.
     with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(header)
         w.writerows(rows)
 
 
-def job_ranges(jobs: dict) -> str:
-    by = {}
-    for jid in sorted(jobs):
-        by.setdefault(jobs[jid]["guideline"], []).append(jid)
-    return ", ".join(f"{g} ({ids[0]}-{ids[-1]})" if len(ids) > 1 else f"{g} ({ids[0]})" for g, ids in sorted(by.items()))
+def ranges(job_ids: list[str]) -> str:
+    js = sorted(job_ids)
+    return js[0] if len(js) == 1 else f"{js[0]}-{js[-1]}"
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Dựng lô v2 từ errors.json")
-    ap.add_argument("--run", required=True)
-    ap.add_argument("--errors", required=True)
-    ap.add_argument("--no-pack", action="store_true")
-    a = ap.parse_args()
-
-    run = Path(a.run)
+    ap = argparse.ArgumentParser(description="Dựng lô v2 không ghi đè v1")
+    ap.add_argument("--run", required=True, help="thư mục runs/r<seed> (có delivery/ và errors.json)")
+    ap.add_argument("--hong", default="", help="ảnh wrong_hash đã mở ra thấy HỎNG, cách nhau dấu phẩy (đưa vào rework)")
+    ap.add_argument("--errors", default="", help="đường dẫn errors.json (mặc định <run>/errors.json)")
+    ap.add_argument("--no-pack", action="store_true", help="không tự chạy scripts/pack_release.py ở cuối")
+    args = ap.parse_args()
+    run = Path(args.run)
     d = run / "delivery"
     rid = json.loads((d / "release.json").read_text(encoding="utf-8"))["release_id"]
     man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))["items"]
     meta = {m["image"]: m for m in json.loads((d / "metadata.json").read_text(encoding="utf-8"))["items"]}
     with (d / "jobs.csv").open(encoding="utf-8-sig", newline="") as f:
-        jobs = {r["job_id"]: r for r in csv.DictReader(f)}
-    names = {}
-    for ln in (d / "classes.txt").read_text(encoding="utf-8").splitlines():
-        if ln.strip():
-            i, n = ln.split(" ", 1)
-            names[int(i)] = n.strip()
-    errors = json.loads(Path(a.errors).read_text(encoding="utf-8"))["errors"]
+        jobs = {row["job_id"]: row for row in csv.DictReader(f)}
+    classes = {}
+    for line in (d / "classes.txt").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            i, n = line.strip().split(" ", 1)
+            classes[int(i)] = n.strip()
+    pan = json.loads((d / "panoptic.json").read_text(encoding="utf-8"))
+    sizes = {Path(im["file_name"]).stem: (im["width"], im["height"]) for im in pan["images"]}
+    errors_path = Path(args.errors) if args.errors else run / "errors.json"
+    errors = json.loads(errors_path.read_text(encoding="utf-8"))["errors"]
+    hong = {x.strip() for x in args.hong.split(",") if x.strip()}
 
-    # Ảnh nào vào rework, vì lỗi gì
-    rework: dict[str, str] = {}
-    fixed_hash, broken_hash, panoptic, mismatch, leaks = [], [], [], [], []
+    # Phân loại lỗi theo ảnh
+    by_image: dict[str, list[str]] = defaultdict(list)
+    leak_scenes = set()
     for e in errors:
-        t, tg = e["type"], e["target"]
-        if t in DET_REWORK and tg in man:
-            rework.setdefault(tg, t)
-        elif t == "wrong_hash" and tg in man:
-            if image_ok(d / man[tg]["image"]):
-                fixed_hash.append(tg)
+        if e["type"] == "scene_leak":
+            leak_scenes.add(e["target"])
+        else:
+            by_image[e["target"]].append(e["type"])
+
+    rework, panoptic_notes, hash_fixed, guideline_fixed = [], [], [], []
+    for name, kinds in sorted(by_image.items()):
+        if name not in man:
+            print(f"BỎ QUA: {name} không có trong manifest v1")
+            continue
+        job = jobs[meta[name]["job_id"]]
+        det = [k for k in kinds if k in DET_REWORK]
+        if "wrong_hash" in kinds:
+            ok, why = jpeg_ok(d / man[name]["image"], sizes.get(name))
+            if name in hong or not ok:
+                det.append("wrong_hash")
+                print(f"wrong_hash {name}: đưa vào rework ({'nhóm đánh dấu hỏng' if name in hong else why})")
             else:
-                broken_hash.append(tg)
-                rework.setdefault(tg, t)
-        elif t in PANOPTIC_ONLY:
-            panoptic.append(f"{tg} ({t})")
-        elif t == "guideline_mismatch":
-            mismatch.append(tg)
-        elif t == "scene_leak":
-            leaks.append(tg)
+                hash_fixed.append(name)
+                print(f"wrong_hash {name}: {why}, ảnh đọc được -> giữ, ghi hash mới. NHỚ MỞ ẢNH XEM TRƯỚC KHI CHỐT.")
+        if det:
+            rework.append([name, det[0], job["annotator"], job["reviewer"], ACTION[det[0]]])
+        if "guideline_mismatch" in kinds:
+            guideline_fixed.append(name)
+        for k in kinds:
+            if k in PANOPTIC_ONLY:
+                panoptic_notes.append(f"{name} ({k})")
+    rework_names = {r[0] for r in rework}
 
-    # Split đa số của từng cảnh (tính trên toàn v1)
-    scene_split = {}
-    by_scene = {}
+    # Split của cả cảnh theo đa số trong v1 (cảnh rò: chỉ một ảnh bị đặt lệch)
+    scene_votes: dict[str, Counter] = defaultdict(Counter)
     for m in meta.values():
-        by_scene.setdefault(m["scene_id"], []).append(m["split"])
-    for sc, sp in by_scene.items():
-        cnt = Counter(sp)
-        scene_split[sc] = max(sorted(cnt), key=lambda s: (cnt[s], s == "train"))
+        scene_votes[m["scene_id"]][m["split"]] += 1
+    scene_split = {sc: v.most_common(1)[0][0] for sc, v in scene_votes.items()}
+    leak_fixed = []
+    for sc in sorted(leak_scenes):
+        moved = [m["image"] for m in meta.values() if m["scene_id"] == sc and m["split"] != scene_split[sc]]
+        votes_txt = ", ".join(f"{k} {n}" for k, n in scene_votes[sc].most_common())
+        leak_fixed.append(f"{sc}: {', '.join(moved)} ({votes_txt}) -> {scene_split[sc]}")
 
+    # Ghi lô v2
     v2 = run / "handover" / f"{rid}_v2"
     if v2.exists():
         shutil.rmtree(v2)
     (v2 / "images").mkdir(parents=True)
     (v2 / "labels").mkdir()
+    keep = [n for n in man if n not in rework_names]
+    for n in keep:
+        shutil.copyfile(d / man[n]["image"], v2 / "images" / Path(man[n]["image"]).name)
+        shutil.copyfile(d / man[n]["label"], v2 / "labels" / Path(man[n]["label"]).name)
 
-    kept = []
-    for name in sorted(man):
-        it = man[name]
-        if name in rework or not (d / it["image"]).is_file():
-            continue
-        shutil.copy2(d / it["image"], v2 / "images" / Path(it["image"]).name)
-        shutil.copy2(d / it["label"], v2 / "labels" / Path(it["label"]).name)
-        kept.append(name)
+    write_csv(v2 / "rework_queue.csv", ["image", "type", "annotator", "reviewer", "action"], rework)
+    files = sorted(p for sub in ("images", "labels") for p in (v2 / sub).iterdir() if p.is_file())
+    write_csv(v2 / "manifest.csv", ["file", "sha256"], [[p.relative_to(v2).as_posix(), sha(p)] for p in files])
 
-    # rework_queue.csv
-    rows = []
-    for name in sorted(rework):
-        job = jobs[meta[name]["job_id"]]
-        rows.append([name, rework[name], job["annotator"], job["reviewer"], ACTION.get(rework[name], "gán lại")])
-    write_csv(v2 / "rework_queue.csv", ["image", "type", "annotator", "reviewer", "action"], rows)
+    counts: Counter = Counter()
+    for n in keep:
+        for line in (v2 / "labels" / Path(man[n]["label"]).name).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                c = int(float(line.split()[0]))
+                counts[classes.get(c, str(c))] += 1
+    order = {name: i for i, name in classes.items()}
+    summary = sorted(counts.items(), key=lambda kv: order.get(kv[0], 999))
+    write_csv(v2 / "label_summary.csv", ["class", "count"], [[k, v] for k, v in summary] + [["TOTAL", sum(counts.values())]])
 
-    # manifest.csv
-    rows = [[p.relative_to(v2).as_posix(), sha(p)]
-            for sub in ("images", "labels") for p in sorted((v2 / sub).iterdir()) if p.is_file()]
-    write_csv(v2 / "manifest.csv", ["file", "sha256"], rows)
+    write_csv(v2 / "truyvet.csv", ["image", "scene_id", "split", "job_id", "annotator", "reviewer", "guideline"],
+              [[n, meta[n]["scene_id"], scene_split[meta[n]["scene_id"]], meta[n]["job_id"],
+                jobs[meta[n]["job_id"]]["annotator"], jobs[meta[n]["job_id"]]["reviewer"], jobs[meta[n]["job_id"]]["guideline"]]
+               for n in keep])
 
-    # label_summary.csv
-    counts = Counter()
-    for name in kept:
-        for ln in (v2 / "labels" / f"{name}.txt").read_text(encoding="utf-8").splitlines():
-            if ln.strip():
-                counts[int(float(ln.split()[0]))] += 1
-    rows = [[names.get(c, str(c)), counts[c]] for c in sorted(counts)]
-    total = sum(counts.values())
-    rows.append(["TOTAL", total])
-    write_csv(v2 / "label_summary.csv", ["class", "count"], rows)
-
-    # truyvet.csv
-    rows = []
-    for name in kept:
-        m = meta[name]
-        job = jobs[m["job_id"]]
-        rows.append([name, m["scene_id"], scene_split[m["scene_id"]], m["job_id"],
-                     job["annotator"], job["reviewer"], job["guideline"]])
-    write_csv(v2 / "truyvet.csv", ["image", "scene_id", "split", "job_id", "annotator", "reviewer", "guideline"], rows)
-
-    # README.txt
+    by_version: dict[str, list[str]] = defaultdict(list)
+    for j, row in jobs.items():
+        by_version[row["guideline"]].append(j)
+    guideline_line = ", ".join(f"{v} ({ranges(js)})" for v, js in sorted(by_version.items()))
     n_err = len({e["target"] for e in errors})
     rate = n_err / len(man)
-    v1 = "Hold" if rate > THRESHOLD else "Release"
-    owners = sorted({f"{r[2]}/{r[3]}" for r in csv.reader((v2 / "rework_queue.csv").open(encoding="utf-8"))
-                     if r[0] != "image"})
-    leak_note = "; ".join(f"{sc} về {scene_split[sc]}" for sc in leaks) or "không có"
-    notes = [
-        f"split: đưa cả cảnh về split đa số ({leak_note})",
-        f"hash: {len(fixed_hash)} ảnh sai hash đã mở kiểm bằng Pillow (đọc được toàn bộ), ảnh còn nguyên nên giữ và ghi hash mới trong manifest.csv"
-        + (f" ({', '.join(fixed_hash)})" if fixed_hash else "")
-        + (f"; {len(broken_hash)} ảnh hỏng chuyển rework ({', '.join(broken_hash)})" if broken_hash else ""),
-        f"guideline: truyvet.csv lấy guideline theo job trong jobs.csv ({len(mismatch)} ảnh metadata ghi sai"
-        + (f": {', '.join(mismatch)}" if mismatch else "") + ")",
-        f"rework: {len(rework)} ảnh lỗi nhãn detection/thiếu file trong rework_queue.csv, giao lại đúng người gán/kiểm theo job"
-        + (f" ({', '.join(owners)})" if owners else ""),
-        "panoptic: ảnh chỉ lỗi panoptic ở lại v2, báo team panoptic sửa: " + (", ".join(panoptic) or "không có"),
-    ]
+    v1_decision = "Hold" if rate > THRESHOLD else "Release"
+    rework_by_person = Counter(f"{r[2]}/{r[3]}" for r in rework)
+    pct = f"{rate * 100:.1f}".replace(".", ",") + "%"
+    lineage = run.parent / "lineage.jsonl"
+    trained = sorted({e.get("run_id") for e in (json.loads(x) for x in lineage.read_text(encoding="utf-8").splitlines() if x.strip())
+                      if e.get("event") == "train" and e.get("release_id") == rid}) if lineage.is_file() else []
+    runs_txt = ", ".join(trained) + " đã train trên v1 phải xem lại hoặc train lại" if trained else "chưa có run nào train trên v1"
     readme = [
         f"Release: {rid}_v2",
         f"Parent: {rid}",
-        f"Số ảnh: {len(kept)}",
-        f"Số nhãn: {total}",
-        f"Guideline: {job_ranges(jobs)}",
-        f"QC v1: {n_err}/{len(man)} = {rate * 100:.1f}%".replace(".", ","),
-        f"Kết luận v1: {v1} — {rate * 100:.1f}% ảnh/cảnh lỗi ".replace(".", ",")
-        + ("vượt ngưỡng 2%" if v1 == "Hold" else "không vượt ngưỡng 2%"),
-        f"Kết luận v2: Release — đã tách {len(rework)} ảnh lỗi detection sang rework, sửa split/hash/guideline; "
-        f"còn {len(panoptic)} ảnh lỗi panoptic chờ team panoptic (không ảnh hưởng nhãn detection)",
-        "Ghi chú: " + " | ".join(notes),
+        f"Số ảnh: {len(keep)}",
+        f"Số nhãn: {sum(counts.values())}",
+        f"Guideline: {guideline_line}",
+        f"QC v1: {n_err}/{len(man)} = {pct}",
+        f"Kết luận v1: {v1_decision} — {n_err} ảnh/cảnh lỗi trên {len(man)} ảnh = {pct}, "
+        + (f"vượt ngưỡng 2% nên không Release; {runs_txt}" if rate > THRESHOLD else "không vượt ngưỡng 2%"),
+        f"Kết luận v2: Release — sản phẩm detection: tách {len(rework)} ảnh lỗi nhãn detection/thiếu file sang rework_queue, "
+        f"sửa {len(hash_fixed)} hash, {len(guideline_fixed)} guideline, {len(leak_scenes)} cảnh rò split; nhãn detection còn lại giữ nguyên như v1",
+        "Ghi chú: "
+        + (f"Hash: {', '.join(hash_fixed)} đã mở ảnh kiểm, ảnh còn nguyên, ghi sha256 mới trong manifest.csv. " if hash_fixed else "")
+        + (f"Guideline: {', '.join(guideline_fixed)} ghi lại theo guideline của job trong truyvet.csv. " if guideline_fixed else "")
+        + (f"Split: {'; '.join(leak_fixed)} (cả cảnh về split đa số). " if leak_fixed else "")
+        + (f"Rework giao lại người gán/người kiểm của job: {', '.join(f'{k} ({v} ảnh)' for k, v in sorted(rework_by_person.items()))}. " if rework else "")
+        + (f"Lỗi chỉ ở panoptic, ảnh ở lại v2 vì nhãn detection đúng, báo team panoptic: {', '.join(panoptic_notes)}." if panoptic_notes else ""),
     ]
     (v2 / "README.txt").write_text("\n".join(readme) + "\n", encoding="utf-8")
-
-    print(f"{v2}: {len(kept)} ảnh, {total} nhãn, rework {len(rework)}, QC v1 {n_err}/{len(man)} = {rate:.1%} -> {v1}")
-    if not a.no_pack:
+    print(f"v2: {len(keep)} ảnh, {sum(counts.values())} nhãn, rework {len(rework)} -> {v2}")
+    print("\n".join(readme))
+    if not args.no_pack:
         subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts" / "pack_release.py"), str(v2)], check=True)
     return 0
 
