@@ -1,0 +1,4 @@
+image,type,verdict,note
+img_0068,bbox_drift,rejected,"[03054] Box ôm sát chai sốt vàng nắp đỏ trên kệ inox, chỉ lệch tự nhiên 2-3px do chạm mép chai phía sau, không phải lỗi drift."
+img_0081,bbox_drift,rejected,"[03054] Các box person đều ôm đúng người thật; box trông rộng hơn do tư thế vươn tay đan chéo và che khuất tự nhiên giữa 3 người."
+img_0106,instance_merge,confirmed,"[03054] Detection bắt đủ 3 box horse riêng biệt nhưng panoptic đã gộp con ngựa nâu giữa và ngựa nâu vàng bên phải thành 1 segment duy nhất."
