@@ -1,4 +1,4 @@
 ﻿image,type,verdict,note
-000000004134,bbox_drift,,[03063] 
-000000005001,missing_box,,[03063] 
-000000007088,bbox_drift,,[03063] 
+000000004134,bbox_drift,rejected,"[03063] vật trong box dòng 9 là ghế màu đen, không phải người; detection và panoptic cùng ghi person nên đây là sai sẵn của COCO, không phải lỗi gài; box chỉ rộng hơn segment ở mép trái, 3 cạnh còn lại khít, không bị dịch nên không phải bbox_drift"
+000000005001,missing_box,confirmed,"[03063] thực sự thiếu box ở person#7763074, người trẻ con đội mũ bảo hộ màu xanh dương góc dưới bên trái màn hình."
+000000007088,bbox_drift,confirmed,"[03063] đúng box bao phủ thiếu phần chân của người trong ảnh, và box còn thừa khoảng trống phía trên đầu"

@@ -1,4 +1,4 @@
 ﻿image,type,verdict,note
-img_0003,bbox_drift,,[03063] 
-img_0037,class_swap,,[03063] 
-img_0045,class_swap,,[03063] 
+img_0003,bbox_drift,rejected,"[03063] chồng 5 quyển sách bên trái; mọi box detection đều lỏng lẻo tương tự nhau, box#4 không lệch hơn các box khác; là cách gán tự nhiên, panoptic đúng"
+img_0037,category_swap,confirmed,"[03063] đầu có 4 răng tách rời, thấy khe hở giữa các răng nên là cái nĩa; detection ghi fork đúng, panoptic ghi spoon là sai"
+img_0045,class_swap,rejected,"[03063] xe ở góc dưới phải bị cắt ở mép ảnh, phần nhìn thấy giống xe con; không thấy thùng hàng hay dãy cửa sổ khách nên không xác định được truck hay bus, không đủ căn cứ"
