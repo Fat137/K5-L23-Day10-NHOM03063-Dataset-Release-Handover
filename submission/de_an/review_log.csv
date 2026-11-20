@@ -1,0 +1,11 @@
+image,type,verdict,note
+img_0003,bbox_drift,rejected,"[03063] chồng 5 quyển sách bên trái; mọi box detection đều lỏng lẻo tương tự nhau, box#4 không lệch hơn các box khác; là cách gán tự nhiên, panoptic đúng"
+img_0037,category_swap,confirmed,"[03063] đầu có 4 răng tách rời, thấy khe hở giữa các răng nên là cái nĩa; detection ghi fork đúng, panoptic ghi spoon là sai"
+img_0045,class_swap,rejected,"[03063] xe ở góc dưới phải bị cắt ở mép ảnh, phần nhìn thấy giống xe con; không thấy thùng hàng hay dãy cửa sổ khách nên không xác định được truck hay bus, không đủ căn cứ"
+img_0068,bbox_drift,rejected,"[03054] Box ôm sát chai sốt vàng nắp đỏ trên kệ inox, chỉ lệch tự nhiên 2-3px do chạm mép chai phía sau, không phải lỗi drift."
+img_0081,bbox_drift,rejected,[03054] Các box person đều ôm đúng người thật; box trông rộng hơn do tư thế vươn tay đan chéo và che khuất tự nhiên giữa 3 người.
+img_0106,instance_merge,confirmed,[03054] Detection bắt đủ 3 box horse riêng biệt nhưng panoptic đã gộp con ngựa nâu giữa và ngựa nâu vàng bên phải thành 1 segment duy nhất.
+img_0127,class_swap,confirmed,[03134] Vali hành lý đặt trong thùng xe nhưng detection gán nhầm thành handbag thay vì suitcase
+img_0164,bbox_drift,confirmed,[03134] Biển báo stop sign bị box detection lệch tâm xuống dưới và sang phải hơn 30%
+img_0169,missing_box,confirmed,[03134] Ô tô màu trắng ở góc dưới bên phải đường không có bounding box trong nhãn detection
+img_0173,bbox_drift,confirmed,"[03200] box bus bị trượt sang trái, phần đuôi xe buýt đỏ sát mép phải ảnh nằm ngoài box, còn mép trái box trùm lên tượng và tường"

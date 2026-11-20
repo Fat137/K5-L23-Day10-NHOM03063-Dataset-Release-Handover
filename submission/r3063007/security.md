@@ -1,15 +1,19 @@
 # Bảo mật khi làm việc
 
+Gắn với lô `lab250_6aa6b3a10f32` (v1, đang HOLD) và lô bàn giao `lab250_6aa6b3a10f32_v2`.
+
 ## 1. Ca USB: hết giờ, muốn chép lô về nhà làm tiếp
-Tuyệt đối không được sao chép dữ liệu của lô ra USB cá nhân, không gửi dữ liệu qua email cá nhân và không nhờ người ngoài làm giúp. Việc sao chép dữ liệu nội bộ ra thiết bị cá nhân hoặc gửi ra môi trường ngoài vi phạm nghiêm trọng thỏa thuận bảo mật thông tin (NDA), tiềm ẩn rủi ro lộ lọt dữ liệu dự án và vi phạm quy định pháp lý về bảo vệ dữ liệu khách hàng. Thay vào đó, nếu cần làm việc ngoài giờ, nhân viên phải xin phê duyệt làm việc từ xa thông qua hạ tầng an toàn của công ty (VPN nội bộ, Remote Desktop/VDI được bảo mật). Nếu không được cấp quyền, nhân viên cần báo cáo trung thực với Team Lead/Project Manager để bàn giao tiến độ, phân bổ thêm nhân lực hoặc xin gia hạn mốc giao hàng sang ngày làm việc kế tiếp.
+
+Không chép. Lô gồm 250 ảnh có người thật, nhãn và thông tin job (người gán, người kiểm), nên chỉ được nằm trên máy và kho của dự án. USB dễ mất, không mã hoá và không ai ghi lại được ai đã cầm dữ liệu. Gửi qua email cá nhân cũng là đưa dữ liệu ra khỏi hệ thống công ty. Nhờ người khác làm hộ bằng tài khoản của mình thì log sẽ ghi sai người làm. Cách đúng: dừng ở mốc hiện tại, ghi lại tiến độ (ví dụ đang xem tới ảnh nào trong hàng đợi review), hôm sau làm tiếp trên máy công ty. Nếu thật sự cần làm từ xa thì xin trưởng nhóm cấp quyền truy cập từ xa (VPN, máy ảo của dự án).
 
 ## 2. Năm việc: được hay không
-1. Mở job được giao trên máy công ty: ĐƯỢC. Đây là thiết bị do công ty quản lý, đã được cài đặt các phần mềm bảo mật, tường lửa và chính sách kiểm soát an toàn thông tin theo tiêu chuẩn doanh nghiệp.
-2. Chụp màn hình gửi người quen: KHÔNG ĐƯỢC. Đây là hành vi tiết lộ dữ liệu nội bộ và quy trình dự án chưa công bố ra bên ngoài, vi phạm trực tiếp cam kết bảo mật NDA và đạo đức nghề nghiệp.
-3. Chép lô ra USB: KHÔNG ĐƯỢC. Thiết bị lưu trữ cá nhân không được mã hóa, không có nhật ký kiểm toán (audit log), rất dễ thất lạc hoặc chứa mã độc lây nhiễm vào hệ thống mạng nội bộ.
-4. Dán nhãn thật lên chatbot: KHÔNG ĐƯỢC. Việc đưa dữ liệu thật của dự án lên các chatbot AI công cộng (như ChatGPT, Claude web) có thể khiến dữ liệu bị lưu trữ trên máy chủ bên thứ ba và dùng để tái huấn luyện mô hình công cộng, gây rò rỉ dữ liệu bảo mật.
-5. Đưa tài khoản CVAT cho đồng nghiệp: KHÔNG ĐƯỢC. Mỗi tài khoản gán nhãn được định danh cá nhân để phục vụ truy vết trách nhiệm và quản lý chất lượng (lineage/audit trail). Việc chia sẻ tài khoản làm mất tính minh bạch trong truy vết ai đã gán, ai đã kiểm duyệt và vi phạm chính sách an ninh tài khoản.
+
+- **Mở job được giao trên máy công ty:** được. Đúng người, đúng quyền, đúng máy, có log.
+- **Chụp màn hình gửi người quen:** không. Ảnh chụp màn hình vẫn là dữ liệu dự án (mặt người, nhãn), gửi ra ngoài là lộ dữ liệu, không thu hồi được.
+- **Chép lô ra USB:** không. Lý do như ca USB ở trên: dữ liệu rời khỏi hệ thống, không kiểm soát được.
+- **Dán nhãn thật lên chatbot:** không với dữ liệu thật của dự án, vì nội dung gửi lên dịch vụ bên ngoài có thể bị lưu lại. Trong lab này ảnh COCO là dữ liệu công khai nên được hỏi, nhưng phải ghi vào `prompts.md`.
+- **Đưa tài khoản CVAT cho đồng nghiệp:** không. Mỗi người một tài khoản để truy vết ai gán, ai sửa. Dùng chung thì `jobs.csv`, rework queue và lineage ghi sai người, và khi có ticket như ticket `cup` của lô này sẽ không biết báo ai.
 
 ## 3. Ca khuôn mặt: thấy mặt người rõ trong lô, guideline yêu cầu làm mờ
-Kết luận: Trạng thái của lô dữ liệu là HOLD và lập tức báo cáo người phụ trách (Team Lead/Data Manager và bộ phận phụ trách Privacy). Nhân viên QC và annotator tuyệt đối không được tự ý can thiệp làm mờ thủ công hoặc tự ý xóa ảnh khỏi lô. Lý do: tự làm mờ bằng công cụ ngoài có thể làm biến dạng cấu trúc pixel, làm sai lệch nhãn bounding box và mask panoptic đã đồng bộ, đồng thời việc tự xóa ảnh sẽ làm phá vỡ cấu trúc cảnh (scene) và phân bố dữ liệu train/val. Quy trình chuẩn là HOLD lô và chuyển lại cho bộ phận tiền xử lý thu thập dữ liệu để chạy pipeline làm mờ tự động đạt chuẩn khử định danh (anonymization) theo quy định bảo vệ quyền riêng tư.
-Trong lô dữ liệu của nhóm, ví dụ các ảnh có chứa mặt người nhìn rõ cần được rà soát và kiểm soát là ảnh 000000000785 và ảnh 000000000139.
+
+Lô của nhóm có ảnh mặt người nhìn rõ, ví dụ `000000004395` (cận cảnh nam thanh niên áo sơ mi trắng, thắt cà vạt, mặt nhìn thẳng ngang) và `000000001296` (cận cảnh cô gái cầm điện thoại, mặt rõ, phía sau có đám đông). Khi thấy ảnh như vậy mà guideline yêu cầu làm mờ: chuyển lô sang **Hold** (không Release, không giao tiếp), ghi tên ảnh và báo người phụ trách dữ liệu/bảo mật của dự án. Không tự làm mờ hay xoá ảnh, vì sửa hoặc xoá file sẽ làm đổi hash và manifest, mất dấu vết trong lineage, và quyết định xử lý dữ liệu cá nhân (làm mờ, xoá, hay xin lại đồng ý) là việc của người phụ trách, phải làm theo quy trình rồi tạo một bản phát hành mới có ghi parent.

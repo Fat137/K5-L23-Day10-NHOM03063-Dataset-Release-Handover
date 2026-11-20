@@ -1,0 +1,54 @@
+{
+ "candidates": [
+  {
+   "type": "bbox_drift",
+   "target": "000000004134",
+   "detail": "box#8 person IoU=0.67 với segment 197638 box=(258,186,311,270) seg=(275,186,311,270)"
+  },
+  {
+   "type": "missing_box",
+   "target": "000000005001",
+   "detail": "segment 7763074 person 10576 px (3.4% ảnh) không có box (IoU tốt nhất 0.32)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "000000007088",
+   "detail": "box#2 person IoU=0.67 với segment 3941741 box=(182,164,284,429) seg=(179,210,277,462)"
+  },
+  {
+   "type": "class_swap",
+   "target": "000000009483",
+   "detail": "box#0 detection=banana <-> segment 9270375 panoptic=tv IoU=0.99 (class_swap hay category_swap: xem ảnh)"
+  },
+  {
+   "type": "instance_merge",
+   "target": "000000009590",
+   "detail": "segment 1775127 person phủ box#5 và box#4 (box#4 không có segment riêng; IoU hợp = 1.00) | khác: bbox_drift: box#5 person IoU=0.74 với segment 1775127 box=(0,53,237,427) seg=(0,53,322,427)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "000000011051",
+   "detail": "box#0 tie IoU=0.57 với segment 5995426 box=(179,207,249,466) seg=(195,198,257,424)"
+  },
+  {
+   "type": "bbox_drift",
+   "target": "000000013659",
+   "detail": "box#10 person IoU=0.53 với segment 789518 box=(499,104,636,292) seg=(519,76,639,239)"
+  },
+  {
+   "type": "missing_box",
+   "target": "000000020247",
+   "detail": "segment 3884370 bear 14137 px (4.8% ảnh) không có box (IoU tốt nhất 0.00)"
+  },
+  {
+   "type": "instance_merge",
+   "target": "000000020553",
+   "detail": "segment 5142174 teddy bear phủ box#3 và box#8 (box#8 không có segment riêng; IoU hợp = 0.99)"
+  },
+  {
+   "type": "class_swap",
+   "target": "000000022705",
+   "detail": "box#3 detection=wine glass <-> segment 1845041 panoptic=cup IoU=0.95 (class_swap hay category_swap: xem ảnh)"
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+image,type,verdict,note
+000000004134,bbox_drift,rejected,"[03063] vật trong box dòng 9 là ghế màu đen, không phải người; detection và panoptic cùng ghi person nên đây là sai sẵn của COCO, không phải lỗi gài; box chỉ rộng hơn segment ở mép trái, 3 cạnh còn lại khít, không bị dịch nên không phải bbox_drift"
+000000005001,missing_box,confirmed,"[03063] thực sự thiếu box ở person#7763074, người trẻ con đội mũ bảo hộ màu xanh dương góc dưới bên trái màn hình."
+000000007088,bbox_drift,confirmed,"[03063] đúng box bao phủ thiếu phần chân của người trong ảnh, và box còn thừa khoảng trống phía trên đầu"
+000000009483,class_swap,confirmed,"[03054] Vật thật ở góc phải bàn làm việc là màn hình máy tính đặt trên thùng PC đen, panoptic ghi tv đúng, detection gán sai thành banana."
+000000009590,instance_merge,confirmed,[03054] Segment person 1775127 gộp chung người đàn ông mặc áo khoác tối ngồi bên trái bàn với phần chân quần jean sáng của người thứ hai ở mép dưới.
+000000011051,bbox_drift,confirmed,"[03054] Cà vạt vàng kem lộ rõ trên áo vest đen không bị che, nhưng box tie lệch sang trái hụt đỉnh và mũi phải, kéo thừa đáy xuống áo 42px."
+000000013659,bbox_drift,confirmed,[03134] Box detection bị lệch khỏi vật thể trên 30% diện tích so với vị trí thực
+000000020247,missing_box,confirmed,[03134] Con gấu bear trong ảnh có mask panoptic rõ ràng nhưng detection thiếu box hoàn toàn
+000000020553,instance_merge,confirmed,[03134] Hai cá thể cùng loại đứng gần nhau bị panoptic gộp chung thành một segment duy nhất
+000000022705,category_swap,confirmed,"[03200] ly có chân cao và đế tròn, đựng đồ uống màu cam, panoptic ghi cup là sai, detection ghi wine glass là đúng"
