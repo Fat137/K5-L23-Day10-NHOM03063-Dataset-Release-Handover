@@ -54,5 +54,5 @@ Vì vậy nhóm giữ hàng đợi nhỏ (≈13 ảnh) để xem hết, và ch�
 - Đã thử trên seed 3063007, 11, 22, 33 và lô dạng đề ẩn (seed 777): truy vết F1 ≈ 1.0 ở cả `tier_a`, `tier_b`, `notify` (`score_findings.py`).
 
 ## 6. Bug hoặc điểm chưa rõ trong lab (nếu có)
-- Không thấy bug làm sai kết quả trong `scripts/`.
+- **`scripts/pack_release.py` không tái lập được giữa các phiên bản Python.** Script ghi "cùng nội dung thì cùng mã băm, trên mọi máy", nhưng zip nén bằng `ZIP_DEFLATED` nên byte phụ thuộc thư viện zlib. Python 3.14 trên Windows dùng zlib-ng 2.2.4, nén cùng thư mục v2 ra `103b2b8a…`; Python 3.12 và 3.13 (zlib 1.3.1) ra `e8b98823…`. Đóng gói bằng 3.14 rồi kiểm bằng 3.13 thì H15 FAIL dù nội dung không đổi (thành viên trong nhóm phát hiện khi kiểm trên máy khác). Nhóm đóng gói lại bằng Python 3.13; `.sha256` nộp là `e8b98823…`. Muốn tái lập trên mọi máy thì nên lưu file không nén (`ZIP_STORED`) hoặc băm danh sách sha256 từng file thay vì băm zip.
 - Điểm dễ vấp: `scripts/merge_review.py` và `scripts/check_handover.py` đọc CSV bằng `utf-8` (không bỏ BOM). File review lưu từ Excel có BOM ở đầu và bị **mất số 0 đầu tên ảnh** (`000000004134` → `4134`), nên ảnh không khớp với `candidates.json`. Nhóm sửa CSV bằng trình soạn thảo văn bản, và `tools/gop_review.py` tự bỏ BOM, báo ảnh ứng viên chưa ai xem.
